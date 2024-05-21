@@ -2,10 +2,10 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 [project]
-name = "ProxyPool"
+name = "proxypool_util"
 version = "0.1.0"
 authors = [
-  { name="Mykhailo Razb", email="mykhailo.razb@gmail.com" },
+  { name="Mykhailo Razbeiko", email="mykhailo.razb@gmail.com" },
 ]
 description = "Proxy pool to rotate and manage proxies"
 readme = "README.md"
@@ -17,5 +17,5 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "none"
-Issues = "none"
+Homepage = "https://github.com/MykhailoRp/proxypool_util"
+Issues = "https://github.com/MykhailoRp/proxypool_util/issues"
