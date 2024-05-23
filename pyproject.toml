@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "proxypool_util"
-version = "0.1.2"
+version = "0.1.3"
 authors = [
   { name="Mykhailo Razbeiko", email="mykhailo.razb@gmail.com" },
 ]

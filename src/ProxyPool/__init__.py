@@ -27,6 +27,22 @@ class ProxyPool:
     def __len__(self):
         return self.available_proxy_count()
 
+    def add_proxies(self, proxy_list):
+        temp_list = _ProxyDict({
+            a: ProxyData() for a in proxy_list
+        })
+
+        self._proxy_dict = temp_list | self._proxy_dict
+
+    def remove_proxies(self, proxy_list):
+        for prox in proxy_list:
+            self._proxy_dict.pop(prox)
+
+    def clear_unusable(self):
+        for proxy_str, prox_data in self._proxy_dict.items():
+            if self.proxy_valid_to_use(prox_data):
+                self._proxy_dict.pop(proxy_str)
+
     def available_proxy_count(self):
         prox_counter = 0
         for proxy_str, prox_data in self._proxy_dict.items():
@@ -86,6 +102,8 @@ class ProxyPool:
 
         return (
                 (self.max_uses <= 0 or proxy.used_counter < self.max_uses)
+                and
+                (self.max_time_outs <= 0 or proxy.timed_out_counter < self.max_time_outs)
                 and
                 proxy.is_valid()
         )
