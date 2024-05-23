@@ -24,6 +24,9 @@ class ProxyPool:
     def __getitem__(self, item):
         return self._proxy_dict[item]
 
+    def __len__(self):
+        return self.available_proxy_count()
+
     def available_proxy_count(self):
         prox_counter = 0
         for proxy_str, prox_data in self._proxy_dict.items():
