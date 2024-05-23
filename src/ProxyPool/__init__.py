@@ -1,5 +1,5 @@
 import time
-import ProxyExceptions
+from . import ProxyExceptions
 
 class _ProxyDict(dict):
     def __getitem__(self, item):
