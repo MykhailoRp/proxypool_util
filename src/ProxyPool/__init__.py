@@ -1,4 +1,5 @@
 import time
+from threading import Lock, Condition
 from . import ProxyExceptions
 
 class _ProxyDict(dict):
@@ -10,12 +11,17 @@ class _ProxyDict(dict):
 
 class ProxyPool:
 
-    def __init__(self, proxy_list: [str], *, max_give_outs = 0, max_time_outs = 0, max_uses = 0, time_out_on_use = 0):
+    def __init__(self, proxy_list: [str], *, max_give_outs = 0, max_time_outs = 0, max_uses = 0, time_out_on_use = 0, replenish_proxies_func = None):
 
         self.max_give_outs = max_give_outs
         self.max_time_outs = max_time_outs
         self.max_uses = max_uses
         self.time_out_on_use = time_out_on_use
+
+        self._replenish_condition = Condition()
+        self._replenish_lock = Lock()
+
+        self.replenish_proxies_func = replenish_proxies_func
 
         self._proxy_dict = _ProxyDict({
             a: ProxyData() for a in proxy_list
@@ -55,7 +61,11 @@ class ProxyPool:
     def Proxy(self, proxy = None):
         return Proxy(self, proxy)
 
-    def get_proxy(self, prev_proxy: str = None) -> str:
+    def get_proxy(self, prev_proxy: str = None, *, _replenish = True) -> str:
+
+        with self._replenish_condition:
+            while self._replenish_lock.locked():
+                self._replenish_condition.wait()
 
         min_timeout = None
 
@@ -75,6 +85,23 @@ class ProxyPool:
                 min_timeout = prox_data.timeout if min_timeout is None else min(min_timeout, prox_data.timeout)
 
         if min_timeout is None:
+
+            if self.replenish_proxies_func is not None and _replenish:
+                with self._replenish_condition:
+
+                    self._replenish_lock.acquire()
+
+                    try:
+                        self.replenish_proxies_func(self)
+                        self._replenish_lock.release()
+                        self._replenish_condition.notify_all()
+                    except Exception as e:
+                        self._replenish_lock.release()
+                        self._replenish_condition.notify_all()
+                        raise e
+
+                return self.get_proxy(prev_proxy = prev_proxy, _replenish = False)
+
             raise ProxyExceptions.NoValidProxies("No valid proxies available")
         else:
             raise ProxyExceptions.ProxiesTimeout(f"One proxy will be available at {min_timeout}", min_timeout)
