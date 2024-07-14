@@ -61,6 +61,9 @@ class ProxyPool:
     def Proxy(self, proxy = None):
         return Proxy(self, proxy)
 
+    def return_proxy(self, proxy):
+        self._proxy_dict[proxy].given_out_counter -= 1
+
     def get_proxy(self, prev_proxy: str = None, *, _replenish = True) -> str:
 
         with self._replenish_condition:
@@ -74,7 +77,7 @@ class ProxyPool:
             if self.proxy_valid_to_give(prox_data):
 
                 if prev_proxy is not None:
-                    self._proxy_dict[prev_proxy].given_out_counter -= 1
+                    self.return_proxy(prev_proxy)
 
                 prox_data.given_out_counter += 1
 
@@ -124,7 +127,7 @@ class ProxyPool:
 
     def proxy_valid_to_use(self, proxy):
 
-        if isinstance(proxy, str):
+        if not isinstance(proxy, ProxyData):
             proxy = self._proxy_dict[proxy]
 
         return (
@@ -203,3 +206,7 @@ class Proxy:
 
     def ban(self):
         self.proxy_pool.ban_proxy(self.assigned_proxy)
+
+    def __del__(self):
+        if self.assigned_proxy is not None:
+            self.proxy_pool.return_proxy(self.assigned_proxy)
