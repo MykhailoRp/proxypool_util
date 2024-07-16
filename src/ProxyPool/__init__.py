@@ -11,9 +11,8 @@ class _ProxyDict(dict):
 
 class ProxyPool:
 
-    def __init__(self, proxy_list: [str], *, max_give_outs = 0, max_time_outs = 0, max_uses = 0, time_out_on_use = 0, replenish_proxies_func = None):
+    def __init__(self, proxy_list: [str], *, max_time_outs = 0, max_uses = 0, time_out_on_use = 0, replenish_proxies_func = None):
 
-        self.max_give_outs = max_give_outs
         self.max_time_outs = max_time_outs
         self.max_uses = max_uses
         self.time_out_on_use = time_out_on_use
@@ -116,8 +115,6 @@ class ProxyPool:
             proxy = self._proxy_dict[proxy]
 
         return (
-                (self.max_give_outs <= 0 or proxy.given_out_counter < self.max_give_outs)
-                and
                 (self.max_time_outs <= 0 or proxy.timed_out_counter < self.max_time_outs)
                 and
                 (self.max_uses <= 0 or proxy.used_counter < self.max_uses)
