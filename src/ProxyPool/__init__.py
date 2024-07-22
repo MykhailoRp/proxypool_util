@@ -1,6 +1,7 @@
 import time
 from threading import Lock, Condition
 from . import ProxyExceptions
+from collections import deque
 
 class _ProxyDict(dict):
     def __getitem__(self, item):
@@ -8,6 +9,45 @@ class _ProxyDict(dict):
             return dict.__getitem__(self, item)
         except KeyError:
             raise ProxyExceptions.UnknownProxy(f"Unknown proxy: {item}")
+
+class _ProxyQueue(deque):
+    def __init__(self, ProxyPoolLink, clean_proxy_list):
+        super().__init__(clean_proxy_list)
+        self.ProxyPoolLink = ProxyPoolLink
+        self.alter_lock = Lock()
+
+    def peek(self):
+        return self[0]
+
+    def pop(self):
+        with self.alter_lock:
+            return super().pop()
+
+    def remove(self, item):
+        with self.alter_lock:
+            return super().remove(item)
+
+    def popleft(self):
+        with self.alter_lock:
+            return super().popleft()
+
+    def put(self, proxy):
+
+        with self.alter_lock:
+            try:
+                super().remove(proxy.proxy_url)
+            except ValueError:
+                pass
+
+            for i, a in enumerate(self):
+                if proxy.timeout <= self.ProxyPoolLink[a].timeout:
+                    if i == 0:
+                        self.appendleft(proxy.proxy_url)
+                    else:
+                        self.insert(i, proxy.proxy_url)
+                    break
+            else:
+                self.append(proxy.proxy_url)
 
 class ProxyPool:
 
@@ -23,8 +63,13 @@ class ProxyPool:
         self.replenish_proxies_func = replenish_proxies_func
 
         self._proxy_dict = _ProxyDict({
-            a: ProxyData() for a in proxy_list
+            a: ProxyData(a) for a in proxy_list
         })
+
+        self._proxy_queue = _ProxyQueue(self, proxy_list)
+
+    def __contains__(self, item):
+        return item in self._proxy_dict
 
     def __getitem__(self, item):
         return self._proxy_dict[item]
@@ -32,21 +77,21 @@ class ProxyPool:
     def __len__(self):
         return self.available_proxy_count()
 
-    def add_proxies(self, proxy_list):
-        temp_list = _ProxyDict({
-            a: ProxyData() for a in proxy_list
-        })
+    def add_proxy(self, proxy):
+        self._proxy_dict[proxy] = ProxyData(proxy)
+        self._proxy_queue.put(self._proxy_dict[proxy])
 
-        self._proxy_dict = temp_list | self._proxy_dict
+    def add_proxies(self, proxy_list):
+        for a in proxy_list:
+            self.add_proxy(a)
+
+    def remove_proxy(self, proxy):
+        self._proxy_dict.pop(proxy)
+        self._proxy_queue.remove(proxy)
 
     def remove_proxies(self, proxy_list):
-        for prox in proxy_list:
-            self._proxy_dict.pop(prox)
-
-    def clear_unusable(self):
-        for proxy_str, prox_data in self._proxy_dict.items():
-            if self.proxy_valid_to_use(prox_data):
-                self._proxy_dict.pop(proxy_str)
+        for a in proxy_list:
+            self.remove_proxy(a)
 
     def available_proxy_count(self):
         prox_counter = 0
@@ -58,10 +103,22 @@ class ProxyPool:
         return prox_counter
 
     def Proxy(self, proxy = None):
+
+        if proxy is not None and proxy not in self:
+            self.add_proxy(proxy)
+
         return Proxy(self, proxy)
 
     def return_proxy(self, proxy):
-        self._proxy_dict[proxy].given_out_counter -= 1
+
+        if not isinstance(proxy, ProxyData):
+            proxy = self._proxy_dict[proxy]
+
+        proxy.given_out_counter -= 1
+
+        if self.proxy_valid_to_give(proxy, ignore_timeout=True):
+            self._proxy_queue.put(proxy)
+            
 
     def get_proxy(self, prev_proxy: str = None, *, _replenish = True) -> str:
 
@@ -69,49 +126,48 @@ class ProxyPool:
             while self._replenish_lock.locked():
                 self._replenish_condition.wait()
 
-        min_timeout = None
+        try:
+            proxy_str = self._proxy_queue.popleft()
 
-        for proxy_str, prox_data in self._proxy_dict.items():
+            prox_data = self._proxy_dict[proxy_str]
 
-            if self.proxy_valid_to_give(prox_data):
+            if prox_data.is_timeout():
+                self._proxy_queue.put(prox_data)
+                raise ProxyExceptions.ProxiesTimeout(f"One proxy will be available at {prox_data.timeout}", prox_data.timeout)
 
-                if prev_proxy is not None:
-                    self.return_proxy(prev_proxy)
+            if prev_proxy is not None:
+                self.return_proxy(prev_proxy)
 
-                prox_data.given_out_counter += 1
+            prox_data.given_out_counter += 1
 
-                return proxy_str
+            return proxy_str
 
-            if self.proxy_valid_to_give(prox_data, ignore_timeout=True):
-                assert isinstance(prox_data, ProxyData)
-                min_timeout = prox_data.timeout if min_timeout is None else min(min_timeout, prox_data.timeout)
-
-        if min_timeout is None:
-
+        except IndexError:
             if self.replenish_proxies_func is not None and _replenish:
-                with self._replenish_condition:
 
-                    self._replenish_lock.acquire()
-
-                    try:
-                        self.replenish_proxies_func(self)
-                        self._replenish_lock.release()
-                        self._replenish_condition.notify_all()
-                    except Exception as e:
-                        self._replenish_lock.release()
-                        self._replenish_condition.notify_all()
-                        raise e
+                self.replenish_proxies()
 
                 return self.get_proxy(prev_proxy = prev_proxy, _replenish = False)
 
             raise ProxyExceptions.NoValidProxies("No valid proxies available")
-        else:
-            raise ProxyExceptions.ProxiesTimeout(f"One proxy will be available at {min_timeout}", min_timeout)
 
+    def replenish_proxies(self):
+        with self._replenish_condition:
+
+            self._replenish_lock.acquire()
+
+            try:
+                self.replenish_proxies_func(self)
+                self._replenish_lock.release()
+                self._replenish_condition.notify_all()
+            except Exception as e:
+                self._replenish_lock.release()
+                self._replenish_condition.notify_all()
+                raise e
 
     def proxy_valid_to_give(self, proxy, ignore_timeout = False):
 
-        if isinstance(proxy, str):
+        if not isinstance(proxy, ProxyData):
             proxy = self._proxy_dict[proxy]
 
         return (
@@ -149,8 +205,8 @@ class ProxyPool:
 
 class ProxyData:
 
-    def __init__(self):
-
+    def __init__(self, proxy_url):
+        self.proxy_url = proxy_url
         self.timeout = 0
         self.banned = False
         self.given_out_counter = 0
@@ -175,6 +231,9 @@ class ProxyData:
 
     def is_valid(self, ignore_timeout = False):
         return (not self.banned) and (ignore_timeout or self.timeout < time.time())
+
+    def is_timeout(self):
+        return self.timeout > time.time()
 
 
 class Proxy:
